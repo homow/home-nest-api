@@ -73,10 +73,11 @@ export default async function handler(req, res) {
                 return res.status(401).json({ok: false, error: 'SESSION_EXPIRED'});
             }
         }
+        const isLocal = req.headers.host?.includes('localhost');
 
         const cookieOptions = {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: !isLocal,
             sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
             path: '/',
             maxAge: rememberFlag ? 60 * 60 * 24 * 7 : 60 * 60 * 8,
