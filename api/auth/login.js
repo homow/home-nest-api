@@ -1,11 +1,14 @@
+import cookie from 'cookie';
 import supabaseAnon from '../config/supabaseClient.js';
 import supabaseServer from '../config/supabaseServer.js';
-import cookie from 'cookie';
+import applyCors from "../config/cors.js"
 
 const supabase = supabaseAnon({auth: {persistSession: false}});
 const supabaseAdmin = supabaseServer()
 
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
+    
     if (req.method !== 'POST') {
         return res.status(405).end();
     }
