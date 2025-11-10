@@ -9,5 +9,10 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs"
+  "type": "commonjs",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.81.0",
+    "cookie": "^1.0.2",
+    "formidable": "^3.5.4"
+  }
 }
