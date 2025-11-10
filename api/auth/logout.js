@@ -1,6 +1,7 @@
 import cookie from 'cookie';
 import supabaseAnon from '../config/supabaseClient.js';
 import supabaseServer from '../config/supabaseServer.js';
+import applyCors from "../config/cors.js"
 
 const supabase = supabaseAnon();
 const supabaseAdmin = supabaseServer()
@@ -16,6 +17,8 @@ function clearRefreshCookie() {
 }
 
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
+    
     if (req.method !== 'POST') {
         res.setHeader('Allow', 'POST');
         return res.status(405).json({ ok: false, error: 'METHOD_NOT_ALLOWED' });
