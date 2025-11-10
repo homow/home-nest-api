@@ -1,6 +1,7 @@
 import {IncomingForm} from "formidable";
 import fs from "fs/promises";
 import supabaseServer from "./config/supabaseServer.js";
+import applyCors from "./config/cors.js"
 
 const supabase = supabaseServer();
 
@@ -43,6 +44,8 @@ export const config = {
 };
 
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
+    
     try {
         if (req.method !== "POST") {
             return res.status(405).json({error: "method_not_allowed"});
