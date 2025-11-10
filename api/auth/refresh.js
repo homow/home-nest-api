@@ -4,7 +4,7 @@ import supabaseServer from '../config/supabaseServer.js';
 import applyCors from "../config/cors.js"
 
 const supabase = supabaseAnon({auth: {persistSession: false}});
-const supabaseAdmin = supabaseServer()
+const supabaseAdmin = supabaseServer();
 
 export default async function handler(req, res) {
     if (applyCors(req, res)) return;
@@ -77,7 +77,7 @@ export default async function handler(req, res) {
         const cookieOptions = {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
+            sameSite: 'none',
             path: '/',
             maxAge: rememberFlag ? 60 * 60 * 24 * 7 : 60 * 60 * 8,
         };
