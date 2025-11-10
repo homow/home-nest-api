@@ -77,7 +77,7 @@ export default async function handler(req, res) {
         const cookieOptions = {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'none',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
             path: '/',
             maxAge: rememberFlag ? 60 * 60 * 24 * 7 : 60 * 60 * 8,
         };
