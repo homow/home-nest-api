@@ -1,0 +1,39 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime Files
+node_modules
+dist
+dist-ssr
+*.local
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Editor Directories and Files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Vercel Cache
+.vercel
+
+# Analyze Packages File
+analyze.html
+
+# test files
+test.js
