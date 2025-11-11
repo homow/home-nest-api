@@ -62,6 +62,28 @@ home-nest-api/
 │
 └── vercel.json              # Routing and rewrite rules
 ```
+---
+
+## 🧰 Installation & Setup
+
+Clone the repository and install dependencies locally:
+
+```bash
+# Clone the repository
+git clone https://github.com/homow/home-nest-api.git
+
+# Navigate to the project directory
+cd home-nest-api
+
+# Install dependencies
+npm install
+```
+
+To run it locally with Vercel’s dev environment:
+
+```bash
+vercel dev
+```
 
 ---
 
