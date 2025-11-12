@@ -1,4 +1,4 @@
-import type {SupabaseClient} from "@supabase/supabase-js";
+import type {SupabaseClient} from '@supabase/supabase-js';
 import type {VercelRequest, VercelResponse} from '@vercel/node';
 import supabaseAnon from './config/supabaseClient';
 import supabaseServer from './config/supabaseServer';
@@ -42,21 +42,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
             const num = req.query?.num || url.searchParams.get('num');
             const seq = req.query?.seq || url.searchParams.get('seq');
 
-            let qb = supabaseAdmin.from('properties').select('*');
+            let data: any;
+            let error: any;
 
-            if (id) qb = qb.eq('id', id).single();
-            else if (num) qb = qb.eq('property_number', num).single();
-            else if (seq) qb = qb.eq('property_seq', Number(seq)).single();
-            else {
+            if (id) {
+                ({data, error} = await supabaseAdmin
+                    .from('properties')
+                    .select('*')
+                    .eq('id', id)
+                    .single());
+            } else if (num) {
+                ({data, error} = await supabaseAdmin
+                    .from('properties')
+                    .select('*')
+                    .eq('property_number', num)
+                    .single());
+            } else if (seq) {
+                ({data, error} = await supabaseAdmin
+                    .from('properties')
+                    .select('*')
+                    .eq('property_seq', Number(seq))
+                    .single());
+            } else {
                 const page = Number(req.query?.page || 1);
                 const per = Math.min(Number(req.query?.per || 20), 100);
                 const from = (page - 1) * per;
                 const to = from + per - 1;
-                qb = qb.order('created_at', {ascending: false}).range(from, to);
+
+                ({data, error} = await supabaseAdmin
+                    .from('properties')
+                    .select('*')
+                    .order('created_at', {ascending: false})
+                    .range(from, to));
             }
 
-            const {data, error} = await qb;
-            if (error) return res.status(404).json({error: 'NOT_FOUND', detail: error.message});
+            if (error) {
+                res.status(404).json({error: 'NOT_FOUND', detail: error.message});
+                return;
+            }
+
             res.status(200).json({ok: true, data});
         } catch {
             res.status(500).json({error: 'INTERNAL_ERROR'});
@@ -65,7 +89,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
 
     if (method === 'POST') {
-        if (!(await isAdmin(req))) return res.status(403).json({error: 'FORBIDDEN'});
+        if (!(await isAdmin(req))) {
+            res.status(403).json({error: 'FORBIDDEN'});
+            return;
+        }
 
         try {
             const payload = req.body || {};
@@ -77,36 +104,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
                     payload[f] === null ||
                     (typeof payload[f] === 'string' && payload[f].trim() === '')
                 ) {
-                    return res.status(400).json({error: 'MISSING_FIELD', field: f});
+                    res.status(400).json({error: 'MISSING_FIELD', field: f});
+                    return;
                 }
             }
 
             if (!Array.isArray(payload.features) || payload.features.length < 1) {
-                return res.status(400).json({error: 'INVALID_FEATURES'});
+                res.status(400).json({error: 'INVALID_FEATURES'});
+                return;
             }
 
             if (!['rent', 'sale'].includes(payload.category)) {
-                return res.status(400).json({error: 'INVALID_CATEGORY'});
+                res.status(400).json({error: 'INVALID_CATEGORY'});
+                return;
             }
 
             const price = payload.price !== undefined && payload.price !== null && payload.price !== ''
                 ? Number(payload.price)
                 : undefined;
             if (price !== undefined && (Number.isNaN(price) || price < 0)) {
-                return res.status(400).json({error: 'INVALID_PRICE'});
+                res.status(400).json({error: 'INVALID_PRICE'});
+                return;
             }
 
             let discount_until: string | null = null;
             if (payload.discount_until) {
                 const d = new Date(payload.discount_until);
-                if (isNaN(d.getTime())) return res.status(400).json({error: 'INVALID_DISCOUNT_UNTIL'});
+                if (isNaN(d.getTime())) {
+                    res.status(400).json({error: 'INVALID_DISCOUNT_UNTIL'});
+                    return;
+                }
                 discount_until = d.toISOString();
             }
 
             let price_with_discount: number | undefined = undefined;
             if (payload.price_with_discount !== undefined && payload.price_with_discount !== null) {
                 const pwd = Number(payload.price_with_discount);
-                if (Number.isNaN(pwd) || pwd < 0) return res.status(400).json({error: 'INVALID_PRICE_WITH_DISCOUNT'});
+                if (Number.isNaN(pwd) || pwd < 0) {
+                    res.status(400).json({error: 'INVALID_PRICE_WITH_DISCOUNT'});
+                    return;
+                }
                 price_with_discount = pwd;
             }
 
@@ -127,7 +164,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
                 property_number: payload.property_number ? String(payload.property_number) : undefined,
             };
 
-            Object.keys(insertObj).forEach(k => insertObj[k] === undefined && delete insertObj[k]);
+            for (const k of Object.keys(insertObj) as (keyof typeof insertObj)[]) {
+                if (insertObj[k] === undefined) delete insertObj[k];
+            }
 
             const {data, error} = await supabaseAdmin
                 .from('properties')
@@ -135,7 +174,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
                 .select()
                 .single();
 
-            if (error || !data) return res.status(500).json({error: 'DB_INSERT_FAILED', detail: error?.message || null});
+            if (error || !data) {
+                res.status(500).json({error: 'DB_INSERT_FAILED', detail: error?.message || null});
+                return;
+            }
 
             res.status(200).json({ok: true, property: data});
         } catch {
@@ -145,14 +187,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
 
     if (method === 'PUT') {
-        if (!(await isAdmin(req))) return res.status(403).json({error: 'FORBIDDEN'});
+        if (!(await isAdmin(req))) {
+            res.status(403).json({error: 'FORBIDDEN'});
+            return;
+        }
 
         try {
             const payload = req.body || {};
             const id = payload.id;
             const num = payload.property_number;
 
-            if (!id && !num) return res.status(400).json({error: 'MISSING_IDENTIFIER'});
+            if (!id && !num) {
+                res.status(400).json({error: 'MISSING_IDENTIFIER'});
+                return;
+            }
 
             const updateObj = {...payload};
             delete updateObj.id;
@@ -167,7 +215,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
                 .select()
                 .single();
 
-            if (error || !data) return res.status(404).json({error: 'UPDATE_FAILED', detail: error?.message || null});
+            if (error || !data) {
+                res.status(404).json({error: 'UPDATE_FAILED', detail: error?.message || null});
+                return;
+            }
 
             res.status(200).json({ok: true, property: data});
         } catch {
@@ -177,19 +228,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
 
     if (method === 'DELETE') {
-        if (!(await isAdmin(req))) return res.status(403).json({error: 'FORBIDDEN'});
+        if (!(await isAdmin(req))) {
+            res.status(403).json({error: 'FORBIDDEN'});
+            return;
+        }
 
         try {
             const id = req.query?.id || req.body?.id;
             const num = req.query?.num || req.body?.property_number;
 
-            if (!id && !num) return res.status(400).json({error: 'MISSING_IDENTIFIER'});
+            if (!id && !num) {
+                res.status(400).json({error: 'MISSING_IDENTIFIER'});
+                return;
+            }
 
-            let qb = supabaseAdmin.from('properties');
-            qb = id ? qb.eq('id', id) : qb.eq('property_number', num);
+            const qb = id
+                ? supabaseAdmin.from('properties').select('*').eq('id', id)
+                : supabaseAdmin.from('properties').select('*').eq('property_number', num);
 
-            const {data, error} = await qb.delete().select().single();
-            if (error) return res.status(404).json({error: 'DELETE_FAILED', detail: error?.message || null});
+            const {data, error} = await supabaseAdmin
+                .from('properties')
+                .delete()
+                .match(id ? {id} : {property_number: num})
+                .select()
+                .single();
+
+            if (error) {
+                res.status(404).json({error: 'DELETE_FAILED', detail: error?.message || null});
+                return;
+            }
 
             res.status(200).json({ok: true, property: data});
         } catch {
