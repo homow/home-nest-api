@@ -3,7 +3,7 @@ import cookie, {SerializeOptions} from 'cookie';
 import supabaseAnon from '../config/supabaseClient';
 import supabaseServer from '../config/supabaseServer';
 import applyCors from '../config/cors';
-import {SupabaseClient} from "@supabase/supabase-js";
+import type {SupabaseClient} from "@supabase/supabase-js";
 
 const supabase: SupabaseClient = supabaseAnon();
 const supabaseAdmin: SupabaseClient = supabaseServer();
