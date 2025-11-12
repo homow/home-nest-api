@@ -1,14 +1,15 @@
+import type {VercelRequest, VercelResponse} from '@vercel/node';
 import cookie from 'cookie';
-import supabaseAnon from '../config/supabaseClient.js';
-import supabaseServer from '../config/supabaseServer.js';
-import applyCors from "../config/cors.js"
+import supabaseAnon from '../config/supabaseClient';
+import supabaseServer from '../config/supabaseServer';
+import applyCors from "../config/cors"
 
 const supabase = supabaseAnon({auth: {persistSession: false}});
 const supabaseAdmin = supabaseServer()
 
-export default async function handler(req, res) {
+export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
     if (applyCors(req, res)) return;
-    
+
     if (req.method !== 'POST') {
         return res.status(405).end();
     }
