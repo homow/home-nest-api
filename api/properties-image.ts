@@ -2,8 +2,8 @@ import type {SupabaseClient} from "@supabase/supabase-js";
 import {IncomingForm, File as FormidableFile, Files} from "formidable";
 import fs from "fs/promises";
 import {IncomingMessage, ServerResponse} from "http";
-import supabaseServer from "./config/supabaseServer.ts";
-import applyCors from "./config/cors.ts";
+import supabaseServer from "./config/supabaseServer.js";
+import applyCors from "./config/cors.js";
 
 const supabase: SupabaseClient = supabaseServer();
 
