@@ -23,11 +23,16 @@ function isUuid(v: string): boolean {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }
 
-async function sha256Hex(buffer: Uint8Array | ArrayBuffer): Promise<string> {
-    const buf = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-    const hash = await crypto.subtle.digest("SHA-256", buf);
-    const arr = Array.from(new Uint8Array(hash));
-    return arr.map((b) => b.toString(16).padStart(2, "0")).join("");
+async function sha256Hex(input: ArrayBuffer | ArrayBufferView): Promise<string> {
+    const bytes = input instanceof ArrayBuffer
+        ? new Uint8Array(input)
+        : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+
+    const buffer = bytes.slice().buffer;
+
+    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+    const hashArray = new Uint8Array(hashBuffer);
+    return Array.from(hashArray).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
@@ -41,13 +46,16 @@ function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
 
 async function resolveImageUrl(path: string): Promise<string> {
     try {
-        const {data: signedData, error: signedErr} = await supabase.storage.from("img").createSignedUrl(path, 60 * 30);
-        if (!signedErr && (signedData as any)?.signedUrl) return (signedData as any).signedUrl;
+        const {data: signedData, error: signedErr} = await supabase.storage
+            .from("img")
+            .createSignedUrl(path, 60 * 30);
+        if (!signedErr && signedData?.signedUrl) return signedData.signedUrl;
     } catch (e) {
         console.error("storage signed url error:", e);
     }
-    const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
-    return publicUrl;
+
+    const {data} = supabase.storage.from("img").getPublicUrl(path);
+    return data.publicUrl;
 }
 
 export const config = {
