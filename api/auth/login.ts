@@ -14,7 +14,6 @@ interface LoginBody {
 const supabase = supabaseAnon({auth: {persistSession: false}});
 const supabaseAdmin = supabaseServer();
 
-//
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
     if (applyCors(req, res)) return;
 
