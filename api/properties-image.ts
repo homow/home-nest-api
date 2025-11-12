@@ -1,11 +1,10 @@
-import type {VercelRequest, VercelResponse} from '@vercel/node';
-import type {SupabaseClient} from '@supabase/supabase-js';
-import {IncomingForm, File as FormidableFile} from 'formidable';
-import fs from 'fs/promises';
-import supabaseServer from './config/supabaseServer';
-import applyCors from './config/cors';
+import {IncomingForm, File as FormidableFile, Files} from "formidable";
+import fs from "fs/promises";
+import {IncomingMessage, ServerResponse} from "http";
+import supabaseServer from "./config/supabaseServer";
+import applyCors from "./config/cors";
 
-const supabase: SupabaseClient = supabaseServer();
+const supabase = supabaseServer();
 
 const MAX_FILE_SIZE = 3 * 1024 * 1024;
 const ALLOWED_MIMES = [
@@ -27,13 +26,13 @@ async function sha256Hex(buffer: Uint8Array | ArrayBuffer): Promise<string> {
     const buf = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
     const hash = await crypto.subtle.digest("SHA-256", buf);
     const arr = Array.from(new Uint8Array(hash));
-    return arr.map(b => b.toString(16).padStart(2, "0")).join("");
+    return arr.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
     return new Promise((res, rej) => {
         const chunks: Buffer[] = [];
-        stream.on("data", c => chunks.push(Buffer.from(c)));
+        stream.on("data", (c: Buffer | string) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(String(c))));
         stream.on("end", () => res(Buffer.concat(chunks)));
         stream.on("error", rej);
     });
@@ -41,334 +40,383 @@ function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
 
 export const config = {
     api: {
-        bodyParser: false
-    }
+        bodyParser: false,
+    },
 };
 
-interface ParsedFiles {
-    main_image?: FormidableFile | FormidableFile[];
-    images?: FormidableFile | FormidableFile[];
-}
+type FormFiles = Files | undefined;
+type FormFields = Record<string, unknown> | undefined;
 
-interface ParsedFields {
-    property_id?: string;
-    is_main?: string;
-}
+export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // applyCors returns true if request ended (per your original code)
+    if (applyCors(req as any, res as any)) return;
 
-export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
-    if (applyCors(req, res)) return;
+    const sendJson = (status: number, payload: unknown) => {
+        res.statusCode = status;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify(payload));
+    };
 
     try {
-        if (req.method !== "POST") {
-            res.status(405).json({error: "method_not_allowed"});
+        // Only POST allowed
+        // IncomingMessage doesn't have method typed from 'http', so coerce
+        const method = (req as any).method as string | undefined;
+        if (method !== "POST") {
+            sendJson(405, {error: "method_not_allowed"});
             return;
         }
 
         const form = new IncomingForm({multiples: true, maxFileSize: MAX_FILE_SIZE});
-        await form.parse(req, async (err, fields: ParsedFields, files: ParsedFiles) => {
-            try {
-                if (err) {
-                    res.status(400).json({error: "invalid_form"});
-                    return;
-                }
 
-                const property_id = String(fields?.property_id || "");
-                const main_flag = String(fields?.is_main || "false") === "true";
-
-                if (!property_id || !isUuid(property_id)) {
-                    console.log("INVALID PROPERTY_ID DETECTED", {fields, files, property_id});
-                    res.status(400).json({error: "invalid_property_id"});
-                    return;
-                }
-
-                const {data: propCheck, error: propCheckErr} = await supabase
-                    .from("properties")
-                    .select("id")
-                    .eq("id", property_id)
-                    .limit(1)
-                    .maybeSingle();
-                if (propCheckErr) {
-                    console.error("properties select error (initial):", propCheckErr);
-                    res.status(500).json({error: "internal_error"});
-                    return;
-                }
-                if (!propCheck) {
-                    res.status(404).json({error: "property_not_found"});
-                    return;
-                }
-
-                const fileEntries: { field: string; file: FormidableFile }[] = [];
-
-                if (files?.main_image) {
-                    const f = Array.isArray(files.main_image) ? files.main_image[0] : files.main_image;
-                    fileEntries.push({field: "main_image", file: f});
-                }
-                if (files?.images) {
-                    const imgs = Array.isArray(files.images) ? files.images : [files.images];
-                    for (const f of imgs) fileEntries.push({field: "images", file: f});
-                }
-
-                if (fileEntries.length === 0) {
-                    res.status(400).json({error: "no_files"});
-                    return;
-                }
-
-                const results: any[] = [];
-
-                for (const entry of fileEntries) {
-                    const f = entry.file;
-                    const mime = f.mimetype || "application/octet-stream";
-
-                    if (!ALLOWED_MIMES.includes(mime)) {
-                        res.status(400).json({error: "file_type_not_allowed"});
+        // Wrap parse callback in a Promise so we can await
+        await new Promise<void>((resolveParse) => {
+            form.parse(req as any, async (err: unknown, fields: FormFields, files: FormFiles) => {
+                try {
+                    if (err) {
+                        sendJson(400, {error: "invalid_form"});
+                        resolveParse();
                         return;
                     }
 
-                    let buffer: Buffer;
-                    if (f.filepath) buffer = await fs.readFile(f.filepath);
-                    else if (f?._readable) buffer = await streamToBuffer(f._readable);
-                    else {
-                        res.status(400).json({error: "invalid_file_source"});
+                    const property_id = String((fields as any)?.property_id || "");
+                    const main_flag = String((fields as any)?.is_main || "false") === "true";
+
+                    if (!property_id || !isUuid(property_id)) {
+                        console.log("INVALID PROPERTY_ID DETECTED");
+                        console.log("fields:", fields);
+                        console.log("files:", files);
+                        console.log("property_id:", property_id);
+                        sendJson(400, {error: "invalid_property_id"});
+                        resolveParse();
                         return;
                     }
 
-                    if (buffer.byteLength === 0 || buffer.byteLength > MAX_FILE_SIZE) {
-                        res.status(400).json({error: "file_size_invalid"});
-                        return;
-                    }
-
-                    const hash = await sha256Hex(new Uint8Array(buffer));
-                    const {data: reserveData, error: reserveErr} = await supabase.rpc("reserve_image_record", {p_hash: hash});
-
-                    if (reserveErr) {
-                        console.error("reserve_image_record rpc error:", reserveErr);
-                        if (reserveErr?.code === "P0001" || String(reserveErr?.message || "").toLowerCase().includes("permission")) {
-                            res.status(403).json({error: "forbidden"});
-                        } else {
-                            res.status(500).json({error: "internal_error"});
-                        }
-                        return;
-                    }
-
-                    const reservedRow = Array.isArray(reserveData) ? reserveData[0] : reserveData;
-                    if (!reservedRow || !reservedRow?.out_id) {
-                        console.error("reserve_image_record returned unexpected:", reserveData);
-                        res.status(500).json({error: "reserve_failed"});
-                        return;
-                    }
-
-                    let imageRecordId = reservedRow.out_id;
-                    let imagePath = reservedRow?.out_path || "";
-                    let imageUrl = reservedRow?.out_url || "";
-                    let reused = reservedRow?.created === false;
-
-                    const originalName = (f.originalFilename || "file").toString();
-                    const ext = (originalName.split(".").pop() || "bin").replace(/[^a-z0-9]/gi, "").toLowerCase();
-                    const filename = `${hash}.${ext}`;
-                    const path = `properties/${filename}`;
-
-                    if (reservedRow?.created === true) {
-                        const upload = await supabase?.storage.from("img").upload(path, buffer, {
-                            cacheControl: "3600",
-                            upsert: false,
-                            contentType: mime,
-                        });
-
-                        if (upload.error) {
-                            const msg = String(upload.error.message || upload.error || "");
-                            if (msg.includes("already exists") || msg.includes("cannot overwrite")) {
-                                reused = true;
-                            } else {
-                                console.error("Storage upload error:", upload.error);
-                                res.status(500).json({error: "upload_failed"});
-                                return;
-                            }
-                        }
-
-                        try {
-                            const {data: signedData, error: signedErr} = await supabase.storage.from("img").createSignedUrl(path, 60 * 30);
-                            if (!signedErr && signedData?.signedUrl) imageUrl = signedData.signedUrl;
-                            else {
-                                const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
-                                imageUrl = publicUrl;
-                            }
-                        } catch (e) {
-                            console.error("storage url error:", e);
-                            const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
-                            imageUrl = publicUrl;
-                        }
-
-                        const {data: finalizeData, error: finErr} = await supabase.rpc("finalize_image_record_v2", {
-                            p_id: imageRecordId,
-                            p_path: path,
-                            p_url: imageUrl,
-                        });
-
-                        if (finErr) {
-                            console.error("finalize_image_record_v2 error:", finErr);
-                            res.status(500).json({error: "internal_error"});
-                            return;
-                        }
-
-                        if (!finalizeData) {
-                            console.error("finalize returned falsy:", finalizeData);
-                            res.status(500).json({error: "upload_finalize_failed"});
-                            return;
-                        }
-
-                        imagePath = path;
-                    } else {
-                        reused = true;
-                        if (!imagePath) imagePath = path;
-                        if (!imageUrl) {
-                            try {
-                                const {data: signedData, error: signedErr} = await supabase.storage.from("img").createSignedUrl(path, 60 * 30);
-                                if (!signedErr && signedData?.signedUrl) imageUrl = signedData.signedUrl;
-                                else {
-                                    const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
-                                    imageUrl = publicUrl;
-                                }
-                            } catch (e) {
-                                console.error("storage get url error:", e);
-                                const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
-                                imageUrl = publicUrl;
-                            }
-                        }
-                    }
-
-                    // property existence check before linking
-                    const {data: propNow, error: propNowErr} = await supabase
+                    // 1) quick existence check for property
+                    const {data: propCheck, error: propCheckErr} = await supabase
                         .from("properties")
                         .select("id")
                         .eq("id", property_id)
                         .limit(1)
                         .maybeSingle();
-                    if (propNowErr) {
-                        console.error("properties select error (pre-link):", propNowErr);
-                        res.status(500).json({error: "internal_error"});
+
+                    if (propCheckErr) {
+                        console.error("properties select error (initial):", propCheckErr);
+                        sendJson(500, {error: "internal_error"});
+                        resolveParse();
                         return;
                     }
-                    if (!propNow) {
-                        console.error("property disappeared during processing:", property_id);
-                        res.status(404).json({error: "property_not_found"});
-                        return;
-                    }
-
-                    const shouldSetMain = entry.field === "main_image" || main_flag;
-
-                    const {data: existingLink, error: linkErr} = await supabase
-                        .from("property_images")
-                        .select("id,is_main")
-                        .match({property_id, image_record_id: imageRecordId})
-                        .limit(1)
-                        .maybeSingle();
-
-                    if (linkErr) {
-                        console.error("property_images select error:", linkErr);
-                        res.status(500).json({error: "internal_error"});
+                    if (!propCheck) {
+                        sendJson(404, {error: "property_not_found"});
+                        resolveParse();
                         return;
                     }
 
-                    if (!existingLink) {
-                        if (shouldSetMain) {
-                            const {error: unsetErr} = await supabase
-                                .from("property_images")
-                                .update({is_main: false})
-                                .eq("property_id", property_id)
-                                .eq("is_main", true);
-                            if (unsetErr) {
-                                console.error("failed to unset previous main:", unsetErr);
-                                res.status(500).json({error: "internal_error"});
-                                return;
-                            }
-                        }
+                    type FileEntry = { field: "main_image" | "images"; file: FormidableFile };
 
-                        const {data: linkInsertData, error: linkInsertErr} = await supabase
-                            .from("property_images")
-                            .insert({property_id, image_record_id: imageRecordId, is_main: shouldSetMain})
-                            .select()
-                            .maybeSingle();
+                    const fileEntries: FileEntry[] = [];
 
-                        if (linkInsertErr) {
-                            console.error("linkInsert.error:", linkInsertErr);
-                            res.status(500).json({error: "internal_error"});
+                    if ((files as any)?.main_image) {
+                        const f = Array.isArray((files as any).main_image) ? ((files as any).main_image[0] as FormidableFile) : ((files as any).main_image as FormidableFile);
+                        fileEntries.push({field: "main_image", file: f});
+                    }
+
+                    if ((files as any)?.images) {
+                        const image = Array.isArray((files as any).images) ? ((files as any).images as FormidableFile[]) : [(files as any).images as FormidableFile];
+                        for (const f of image) fileEntries.push({field: "images", file: f});
+                    }
+
+                    if (fileEntries.length === 0) {
+                        sendJson(400, {error: "no_files"});
+                        resolveParse();
+                        return;
+                    }
+
+                    const results: unknown[] = [];
+
+                    for (const entry of fileEntries) {
+                        const f = entry.file;
+                        const mime = (f.mimetype as string) || "application/octet-stream";
+                        if (!ALLOWED_MIMES.includes(mime)) {
+                            sendJson(400, {error: "file_type_not_allowed"});
+                            resolveParse();
                             return;
                         }
 
-                        results.push({
-                            id: linkInsertData.id,
-                            image_record_id: imageRecordId,
-                            path: imagePath,
-                            url: imageUrl,
-                            is_main: linkInsertData.is_main,
-                            reused,
-                        });
-                    } else {
-                        if (shouldSetMain && !existingLink.is_main) {
-                            const {error: unsetErr} = await supabase
-                                .from("property_images")
-                                .update({is_main: false})
-                                .eq("property_id", property_id)
-                                .eq("is_main", true);
-                            if (unsetErr) {
-                                console.error("failed to unset previous main:", unsetErr);
-                                res.status(500).json({error: "internal_error"});
+                        let buffer: Buffer;
+                        if ((f as any).filepath) {
+                            buffer = await fs.readFile((f as any).filepath);
+                        } else if ((f as any)?._readable) {
+                            buffer = await streamToBuffer((f as any)._readable as NodeJS.ReadableStream);
+                        } else {
+                            sendJson(400, {error: "invalid_file_source"});
+                            resolveParse();
+                            return;
+                        }
+
+                        if (buffer.byteLength === 0 || buffer.byteLength > MAX_FILE_SIZE) {
+                            sendJson(400, {error: "file_size_invalid"});
+                            resolveParse();
+                            return;
+                        }
+
+                        const hash = await sha256Hex(new Uint8Array(buffer));
+
+                        // 2) Reserve image record (RPC). RPC should be responsible for dedup and returning created flag.
+                        const {data: reserveData, error: reserveErr} = await supabase.rpc("reserve_image_record", {p_hash: hash});
+                        if (reserveErr) {
+                            console.error("reserve_image_record rpc error:", reserveErr);
+                            if (reserveErr?.code === "P0001" || String((reserveErr as any)?.message || "").toLowerCase().includes("permission")) {
+                                sendJson(403, {error: "forbidden"});
+                                resolveParse();
                                 return;
                             }
-                            const {error: setErr} = await supabase.from("property_images").update({is_main: true}).eq("id", existingLink.id);
-                            if (setErr) {
-                                console.error("failed to set main:", setErr);
-                                res.status(500).json({error: "internal_error"});
+                            sendJson(500, {error: "internal_error"});
+                            resolveParse();
+                            return;
+                        }
+
+                        const reservedRow = Array.isArray(reserveData) ? (reserveData as any)[0] : reserveData as any;
+                        if (!reservedRow || !reservedRow?.out_id) {
+                            console.error("reserve_image_record returned unexpected:", reserveData);
+                            sendJson(500, {error: "reserve_failed"});
+                            resolveParse();
+                            return;
+                        }
+
+                        let imageRecordId: string = reservedRow.out_id;
+                        let imagePath: string = reservedRow?.out_path || "";
+                        let imageUrl: string = reservedRow?.out_url || "";
+                        let reused: boolean = reservedRow?.created === false;
+
+                        const originalName = (f.originalFilename || "file").toString();
+                        const ext = (originalName.split(".").pop() || "bin").replace(/[^a-z0-9]/gi, "").toLowerCase();
+                        const filename = `${hash}.${ext}`;
+                        const path = `properties/${filename}`;
+
+                        if (reservedRow?.created === true) {
+                            // Upload to storage
+                            const upload = await supabase?.storage.from("img").upload(path, buffer, {
+                                cacheControl: "3600",
+                                upsert: false,
+                                contentType: mime,
+                            });
+
+                            if ((upload as any)?.error) {
+                                const msg = String(((upload as any)?.error?.message) || (upload as any)?.error || "");
+                                if (msg.includes("already exists") || msg.includes("cannot overwrite")) {
+                                    reused = true;
+                                } else {
+                                    console.error("Storage upload error:", (upload as any).error);
+                                    sendJson(500, {error: "upload_failed"});
+                                    resolveParse();
+                                    return;
+                                }
+                            }
+
+                            // get URL (prefer signed)
+                            try {
+                                const {data: signedData, error: signedErr} = await supabase.storage.from("img").createSignedUrl(path, 60 * 30);
+                                if (!signedErr && (signedData as any)?.signedUrl) imageUrl = (signedData as any).signedUrl;
+                                else {
+                                    const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
+                                    imageUrl = publicUrl;
+                                }
+                            } catch (e) {
+                                console.error("storage url error:", e);
+                                const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
+                                imageUrl = publicUrl;
+                            }
+
+                            // finalize in DB
+                            const {data: finalizeData, error: finErr} = await supabase.rpc("finalize_image_record_v2", {
+                                p_id: imageRecordId,
+                                p_path: path,
+                                p_url: imageUrl,
+                            });
+
+                            if (finErr) {
+                                console.error("finalize_image_record_v2 error:", finErr);
+                                sendJson(500, {error: "internal_error"});
+                                resolveParse();
                                 return;
+                            }
+                            if (!finalizeData) {
+                                console.error("finalize returned falsy:", finalizeData);
+                                sendJson(500, {error: "upload_finalize_failed"});
+                                resolveParse();
+                                return;
+                            }
+
+                            imagePath = path;
+                        } else {
+                            // existing: ensure URL available
+                            reused = true;
+                            if (!imagePath) imagePath = path;
+                            if (!imageUrl) {
+                                try {
+                                    const {data: signedData, error: signedErr} = await supabase.storage.from("img").createSignedUrl(path, 60 * 30);
+                                    if (!signedErr && (signedData as any)?.signedUrl) imageUrl = (signedData as any).signedUrl;
+                                    else {
+                                        const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
+                                        imageUrl = publicUrl;
+                                    }
+                                } catch (e) {
+                                    console.error("storage get url error:", e);
+                                    const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
+                                    imageUrl = publicUrl;
+                                }
                             }
                         }
-                        results.push({
-                            id: existingLink.id,
-                            image_record_id: imageRecordId,
-                            path: imagePath,
-                            url: imageUrl,
-                            is_main: existingLink?.is_main || shouldSetMain,
-                            reused: true,
-                        });
-                    }
-                } // end file loop
 
-                const urls = results.map(r => r.url).filter(Boolean);
-                if (urls.length > 0) {
-                    const {data: prop, error: propErr} = await supabase.from("properties").select("images").eq("id", property_id).maybeSingle();
-                    if (propErr) {
-                        console.error("properties select error:", propErr);
-                        res.status(500).json({error: "internal_error"});
-                        return;
-                    }
-                    if (!prop) {
-                        res.status(404).json({error: "property_not_found"});
-                        return;
+                        // 3) Before linking, ensure property still exists (race protection)
+                        const {data: propNow, error: propNowErr} = await supabase
+                            .from("properties")
+                            .select("id")
+                            .eq("id", property_id)
+                            .limit(1)
+                            .maybeSingle();
+                        if (propNowErr) {
+                            console.error("properties select error (pre-link):", propNowErr);
+                            sendJson(500, {error: "internal_error"});
+                            resolveParse();
+                            return;
+                        }
+                        if (!propNow) {
+                            console.error("property disappeared during processing:", property_id);
+                            sendJson(404, {error: "property_not_found"});
+                            resolveParse();
+                            return;
+                        }
+
+                        // Link to property_images (idempotent)
+                        const shouldSetMain = entry.field === "main_image" || main_flag;
+
+                        const {data: existingLink, error: linkErr} = await supabase
+                            .from("property_images")
+                            .select("id,is_main")
+                            .match({property_id, image_record_id: imageRecordId})
+                            .limit(1)
+                            .maybeSingle();
+
+                        if (linkErr) {
+                            console.error("property_images select error:", linkErr);
+                            sendJson(500, {error: "internal_error"});
+                            resolveParse();
+                            return;
+                        }
+
+                        if (!existingLink) {
+                            if (shouldSetMain) {
+                                const {error: unsetErr} = await supabase
+                                    .from("property_images")
+                                    .update({is_main: false})
+                                    .eq("property_id", property_id)
+                                    .eq("is_main", true);
+                                if (unsetErr) {
+                                    console.error("failed to unset previous main:", unsetErr);
+                                    sendJson(500, {error: "internal_error"});
+                                    resolveParse();
+                                    return;
+                                }
+                            }
+
+                            const {data: linkInsertData, error: linkInsertErr} = await supabase
+                                .from("property_images")
+                                .insert({property_id, image_record_id: imageRecordId, is_main: shouldSetMain})
+                                .select()
+                                .maybeSingle();
+
+                            if (linkInsertErr) {
+                                console.error("linkInsert.error:", linkInsertErr);
+                                sendJson(500, {error: "internal_error"});
+                                resolveParse();
+                                return;
+                            }
+
+                            results.push({
+                                id: (linkInsertData as any).id,
+                                image_record_id: imageRecordId,
+                                path: imagePath,
+                                url: imageUrl,
+                                is_main: (linkInsertData as any).is_main,
+                                reused,
+                            });
+                        } else {
+                            if (shouldSetMain && !existingLink.is_main) {
+                                const {error: unsetErr} = await supabase
+                                    .from("property_images")
+                                    .update({is_main: false})
+                                    .eq("property_id", property_id)
+                                    .eq("is_main", true);
+                                if (unsetErr) {
+                                    console.error("failed to unset previous main:", unsetErr);
+                                    sendJson(500, {error: "internal_error"});
+                                    resolveParse();
+                                    return;
+                                }
+                                const {error: setErr} = await supabase.from("property_images").update({is_main: true}).eq("id", existingLink.id);
+                                if (setErr) {
+                                    console.error("failed to set main:", setErr);
+                                    sendJson(500, {error: "internal_error"});
+                                    resolveParse();
+                                    return;
+                                }
+                            }
+
+                            results.push({
+                                id: existingLink.id,
+                                image_record_id: imageRecordId,
+                                path: imagePath,
+                                url: imageUrl,
+                                is_main: existingLink?.is_main || shouldSetMain,
+                                reused: true,
+                            });
+                        }
+                    } // end loop
+
+                    // 4) Update properties.images and main_image atomically-ish
+                    const urls = (results as any[]).map((r) => r.url).filter(Boolean);
+                    if (urls.length > 0) {
+                        const {data: prop, error: propErr} = await supabase.from("properties").select("images").eq("id", property_id).maybeSingle();
+                        if (propErr) {
+                            console.error("properties select error:", propErr);
+                            sendJson(500, {error: "internal_error"});
+                            resolveParse();
+                            return;
+                        }
+                        if (!prop) {
+                            sendJson(404, {error: "property_not_found"});
+                            resolveParse();
+                            return;
+                        }
+
+                        const existingImages = Array.isArray((prop as any).images) ? (prop as any).images : [];
+                        const newImages = existingImages.concat(urls).filter((v: string, i: number, a: string[]) => a.indexOf(v) === i);
+
+                        const main = (results as any[]).find((r) => r.is_main);
+                        const updatePayload: any = {images: newImages};
+                        if (main) updatePayload.main_image = main.url;
+
+                        const {error: updErr} = await supabase.from("properties").update(updatePayload).eq("id", property_id);
+                        if (updErr) {
+                            console.error("properties update error:", updErr);
+                            sendJson(500, {error: "internal_error"});
+                            resolveParse();
+                            return;
+                        }
                     }
 
-                    const existingImages = Array.isArray(prop.images) ? prop.images : [];
-                    const newImages = existingImages.concat(urls).filter((v, i, a) => a.indexOf(v) === i);
-
-                    const main = results.find(r => r.is_main);
-                    const updatePayload: any = {images: newImages};
-                    if (main) updatePayload.main_image = main.url;
-
-                    const {error: updErr} = await supabase.from("properties").update(updatePayload).eq("id", property_id);
-                    if (updErr) {
-                        console.error("properties update error:", updErr);
-                        res.status(500).json({error: "internal_error"});
-                        return;
-                    }
+                    sendJson(200, {status: "ok", results});
+                    resolveParse();
+                } catch (e) {
+                    console.error("Internal Error:", e);
+                    sendJson(500, {error: "internal_error"});
+                    resolveParse();
                 }
-
-                res.status(200).json({status: "ok", results});
-            } catch (e) {
-                console.error("Internal Error:", e);
-                res.status(500).json({error: "internal_error"});
-            }
+            });
         });
     } catch (e) {
         console.error("Top-level Error:", e);
-        res.status(500).json({error: "internal_error"});
+        sendJson(500, {error: "internal_error"});
     }
 }
