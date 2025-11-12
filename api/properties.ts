@@ -1,8 +1,8 @@
 import type {SupabaseClient} from '@supabase/supabase-js';
 import type {VercelRequest, VercelResponse} from '@vercel/node';
-import supabaseAnon from './config/supabaseClient';
-import supabaseServer from './config/supabaseServer';
-import applyCors from './config/cors';
+import supabaseAnon from './config/supabaseClient.ts';
+import supabaseServer from './config/supabaseServer.ts';
+import applyCors from './config/cors.ts';
 
 const supabase: SupabaseClient = supabaseAnon();
 const supabaseAdmin: SupabaseClient = supabaseServer();

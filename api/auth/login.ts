@@ -1,9 +1,9 @@
 import type {VercelRequest, VercelResponse} from '@vercel/node';
 import type {AuthError, Session, SupabaseClient, User} from '@supabase/supabase-js';
 import cookie, {SerializeOptions} from 'cookie';
-import supabaseAnon from '../config/supabaseClient';
-import supabaseServer from '../config/supabaseServer';
-import applyCors from '../config/cors';
+import supabaseAnon from '../config/supabaseClient.ts';
+import supabaseServer from '../config/supabaseServer.ts';
+import applyCors from '../config/cors.ts';
 
 interface LoginBody {
     email?: string;
