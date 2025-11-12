@@ -1,5 +1,5 @@
 import type {VercelRequest, VercelResponse} from '@vercel/node';
-import type {AuthError, Session, User} from '@supabase/supabase-js';
+import type {AuthError, Session, SupabaseClient, User} from '@supabase/supabase-js';
 import cookie, {SerializeOptions} from 'cookie';
 import supabaseAnon from '../config/supabaseClient';
 import supabaseServer from '../config/supabaseServer';
@@ -11,8 +11,8 @@ interface LoginBody {
     remember?: boolean;
 }
 
-const supabase = supabaseAnon({auth: {persistSession: false}});
-const supabaseAdmin = supabaseServer();
+const supabase: SupabaseClient = supabaseAnon({auth: {persistSession: false}});
+const supabaseAdmin: SupabaseClient = supabaseServer();
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
     if (applyCors(req, res)) return;
