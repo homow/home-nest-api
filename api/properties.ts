@@ -242,10 +242,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
                 return;
             }
 
-            const qb = id
-                ? supabaseAdmin.from('properties').select('*').eq('id', id)
-                : supabaseAdmin.from('properties').select('*').eq('property_number', num);
-
             const {data, error} = await supabaseAdmin
                 .from('properties')
                 .delete()
