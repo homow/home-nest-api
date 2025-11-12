@@ -1,10 +1,11 @@
+import type {SupabaseClient} from "@supabase/supabase-js";
 import {IncomingForm, File as FormidableFile, Files} from "formidable";
 import fs from "fs/promises";
 import {IncomingMessage, ServerResponse} from "http";
 import supabaseServer from "./config/supabaseServer";
 import applyCors from "./config/cors";
 
-const supabase = supabaseServer();
+const supabase: SupabaseClient = supabaseServer();
 
 const MAX_FILE_SIZE = 3 * 1024 * 1024;
 const ALLOWED_MIMES = [
@@ -38,6 +39,17 @@ function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
     });
 }
 
+async function resolveImageUrl(path: string): Promise<string> {
+    try {
+        const {data: signedData, error: signedErr} = await supabase.storage.from("img").createSignedUrl(path, 60 * 30);
+        if (!signedErr && (signedData as any)?.signedUrl) return (signedData as any).signedUrl;
+    } catch (e) {
+        console.error("storage signed url error:", e);
+    }
+    const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
+    return publicUrl;
+}
+
 export const config = {
     api: {
         bodyParser: false,
@@ -48,7 +60,6 @@ type FormFiles = Files | undefined;
 type FormFields = Record<string, unknown> | undefined;
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // applyCors returns true if request ended (per your original code)
     if (applyCors(req as any, res as any)) return;
 
     const sendJson = (status: number, payload: unknown) => {
@@ -58,8 +69,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     };
 
     try {
-        // Only POST allowed
-        // IncomingMessage doesn't have method typed from 'http', so coerce
         const method = (req as any).method as string | undefined;
         if (method !== "POST") {
             sendJson(405, {error: "method_not_allowed"});
@@ -68,7 +77,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
         const form = new IncomingForm({multiples: true, maxFileSize: MAX_FILE_SIZE});
 
-        // Wrap parse callback in a Promise so we can await
         await new Promise<void>((resolveParse) => {
             form.parse(req as any, async (err: unknown, fields: FormFields, files: FormFiles) => {
                 try {
@@ -91,7 +99,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                         return;
                     }
 
-                    // 1) quick existence check for property
                     const {data: propCheck, error: propCheckErr} = await supabase
                         .from("properties")
                         .select("id")
@@ -161,7 +168,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
                         const hash = await sha256Hex(new Uint8Array(buffer));
 
-                        // 2) Reserve image record (RPC). RPC should be responsible for dedup and returning created flag.
                         const {data: reserveData, error: reserveErr} = await supabase.rpc("reserve_image_record", {p_hash: hash});
                         if (reserveErr) {
                             console.error("reserve_image_record rpc error:", reserveErr);
@@ -194,7 +200,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                         const path = `properties/${filename}`;
 
                         if (reservedRow?.created === true) {
-                            // Upload to storage
                             const upload = await supabase?.storage.from("img").upload(path, buffer, {
                                 cacheControl: "3600",
                                 upsert: false,
@@ -213,21 +218,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                                 }
                             }
 
-                            // get URL (prefer signed)
-                            try {
-                                const {data: signedData, error: signedErr} = await supabase.storage.from("img").createSignedUrl(path, 60 * 30);
-                                if (!signedErr && (signedData as any)?.signedUrl) imageUrl = (signedData as any).signedUrl;
-                                else {
-                                    const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
-                                    imageUrl = publicUrl;
-                                }
-                            } catch (e) {
-                                console.error("storage url error:", e);
-                                const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
-                                imageUrl = publicUrl;
-                            }
+                            // --- جایگزین بلوک تکراری ---
+                            imageUrl = await resolveImageUrl(path);
 
-                            // finalize in DB
                             const {data: finalizeData, error: finErr} = await supabase.rpc("finalize_image_record_v2", {
                                 p_id: imageRecordId,
                                 p_path: path,
@@ -249,26 +242,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
                             imagePath = path;
                         } else {
-                            // existing: ensure URL available
                             reused = true;
                             if (!imagePath) imagePath = path;
-                            if (!imageUrl) {
-                                try {
-                                    const {data: signedData, error: signedErr} = await supabase.storage.from("img").createSignedUrl(path, 60 * 30);
-                                    if (!signedErr && (signedData as any)?.signedUrl) imageUrl = (signedData as any).signedUrl;
-                                    else {
-                                        const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
-                                        imageUrl = publicUrl;
-                                    }
-                                } catch (e) {
-                                    console.error("storage get url error:", e);
-                                    const {publicUrl} = supabase.storage.from("img").getPublicUrl(path);
-                                    imageUrl = publicUrl;
-                                }
-                            }
+                            if (!imageUrl) imageUrl = await resolveImageUrl(path);
                         }
 
-                        // 3) Before linking, ensure property still exists (race protection)
+                        // ادامه‌ی منطق بدون تغییر
                         const {data: propNow, error: propNowErr} = await supabase
                             .from("properties")
                             .select("id")
@@ -288,7 +267,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                             return;
                         }
 
-                        // Link to property_images (idempotent)
                         const shouldSetMain = entry.field === "main_image" || main_flag;
 
                         const {data: existingLink, error: linkErr} = await supabase
@@ -374,7 +352,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                         }
                     } // end loop
 
-                    // 4) Update properties.images and main_image atomically-ish
                     const urls = (results as any[]).map((r) => r.url).filter(Boolean);
                     if (urls.length > 0) {
                         const {data: prop, error: propErr} = await supabase.from("properties").select("images").eq("id", property_id).maybeSingle();

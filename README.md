@@ -53,7 +53,7 @@ home-nest-api/
 ├── api/
 │   ├── auth/                # Handle auth login, logout, refresh and signup
 │   ├── config               # initial supabase and headers config
-│   ├── properties.js        # Handle property CRUD
+│   ├── properties.ts        # Handle property CRUD
 │   └── ...                  # Other API routes
 │
 ├── docs/
