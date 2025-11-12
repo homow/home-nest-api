@@ -1,27 +1,31 @@
-import cookie from 'cookie';
-import supabaseAnon from '../config/supabaseClient.js';
-import supabaseServer from '../config/supabaseServer.js';
-import applyCors from "../config/cors.js"
+import type {VercelRequest, VercelResponse} from '@vercel/node';
+import cookie, {SerializeOptions} from 'cookie';
+import supabaseAnon from '../config/supabaseClient';
+import supabaseServer from '../config/supabaseServer';
+import applyCors from '../config/cors';
+import {SupabaseClient} from "@supabase/supabase-js";
 
-const supabase = supabaseAnon();
-const supabaseAdmin = supabaseServer()
+const supabase: SupabaseClient = supabaseAnon();
+const supabaseAdmin: SupabaseClient = supabaseServer();
 
-function clearRefreshCookie() {
-    return cookie.serialize('sb_refresh_token', '', {
+function clearRefreshCookie(): string {
+    const options: SerializeOptions = {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
         path: '/',
-        maxAge: 0
-    });
+        maxAge: 0,
+    };
+    return cookie.serialize('sb_refresh_token', '', options);
 }
 
-export default async function handler(req, res) {
+export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
     if (applyCors(req, res)) return;
-    
+
     if (req.method !== 'POST') {
         res.setHeader('Allow', 'POST');
-        return res.status(405).json({ ok: false, error: 'METHOD_NOT_ALLOWED' });
+        res.status(405).json({ok: false, error: 'METHOD_NOT_ALLOWED'});
+        return;
     }
 
     const clearHeaders = [clearRefreshCookie()];
@@ -32,13 +36,15 @@ export default async function handler(req, res) {
 
         if (!refreshToken) {
             res.setHeader('Set-Cookie', clearHeaders);
-            return res.status(200).json({ ok: true });
+            res.status(200).json({ok: true});
+            return;
         }
 
         try {
             await supabase.auth.signOut?.();
-            // eslint-disable-next-line
-        } catch (_) {}
+        } catch {
+            // silent
+        }
 
         try {
             if (supabaseAdmin) {
@@ -56,24 +62,22 @@ export default async function handler(req, res) {
                             headers: {
                                 'Content-Type': 'application/json',
                                 apikey: SUPABASE_SERVICE_ROLE_KEY,
-                                Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+                                Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
                             },
-                            body: JSON.stringify({ refresh_token: refreshToken })
+                            body: JSON.stringify({refresh_token: refreshToken}),
                         });
                     }
                 }
             }
-            // eslint-disable-next-line
-        } catch (_) {}
+        } catch {
+            // silent
+        }
 
-        // Clear cookie & disable cache
         res.setHeader('Set-Cookie', clearHeaders);
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-
-        return res.status(200).json({ ok: true });
-
+        res.status(200).json({ok: true});
     } catch {
         res.setHeader('Set-Cookie', clearHeaders);
-        return res.status(500).json({ ok: false, error: 'INTERNAL_ERROR' });
+        res.status(500).json({ok: false, error: 'INTERNAL_ERROR'});
     }
 }
