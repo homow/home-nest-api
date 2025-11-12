@@ -1,26 +1,28 @@
-export default function applyCors(req, res) {
-	const allowedOrigins = [
-		"https://home-nest-admin.vercel.app",
-		"https://home-nest.vercel.app",
-		"http://localhost:5173",
-		"http://localhost:5174",
-		"http://localhost:4173",
-	];
+import type {VercelRequest, VercelResponse} from '@vercel/node';
 
-	const origin = req.headers.origin;
+export default function applyCors(req: VercelRequest, res: VercelResponse): boolean {
+    const allowedOrigins = [
+        'https://home-nest-admin.vercel.app',
+        'https://home-nest.vercel.app',
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://localhost:4173',
+    ];
 
-	if (allowedOrigins.includes(origin)) {
-		res.setHeader('Access-Control-Allow-Origin', origin);
-	}
+    const origin = req.headers.origin;
 
-	res.setHeader("Access-Control-Allow-Credentials", "true");
-	res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-	res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-	
-	if (req.method === 'OPTIONS') {
-		res.status(200).end();
-		return true;
-	}
+    if (origin && allowedOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+    }
 
-	return false;
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return true;
+    }
+
+    return false;
 }
