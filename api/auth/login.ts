@@ -1,8 +1,15 @@
 import type {VercelRequest, VercelResponse} from '@vercel/node';
-import cookie from 'cookie';
+import type {AuthError, Session, User} from "@supabase/supabase-js";
+import cookie, {CookieSerializeOptions} from 'cookie';
 import supabaseAnon from '../config/supabaseClient';
 import supabaseServer from '../config/supabaseServer';
 import applyCors from "../config/cors"
+
+interface LoginBody {
+    email?: string;
+    password?: string;
+    remember?: boolean;
+}
 
 const supabase = supabaseAnon({auth: {persistSession: false}});
 const supabaseAdmin = supabaseServer()
